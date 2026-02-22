@@ -1,65 +1,66 @@
-import Image from "next/image";
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import { Button } from "@/components/ui/button";
 
-export default function Home() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+export default async function Home() {
+  const isClerkConfigured =
+    Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) &&
+    Boolean(process.env.CLERK_SECRET_KEY);
+
+  if (!isClerkConfigured) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#eff6ff,_#f8fafc_52%,_#ffffff)] px-6 py-10">
+        <div className="w-full max-w-3xl rounded-3xl border border-amber-200 bg-amber-50/80 p-8 shadow-xl shadow-amber-100/60 backdrop-blur md:p-12">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-700">
+            Configuration needed
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-amber-900 md:text-4xl">
+            Add Clerk and Convex keys to run authentication.
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-3 text-base leading-7 text-amber-800/90">
+            Copy `.env.example` to `.env.local`, add your keys, and restart the
+            dev server.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
       </main>
-    </div>
+    );
+  }
+
+  const { userId } = await auth();
+
+  if (userId) {
+    redirect("/chat");
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#eff6ff,_#f8fafc_52%,_#ffffff)] px-6 py-10">
+      <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white/90 p-8 shadow-xl shadow-slate-200/60 backdrop-blur md:p-12">
+        <div className="space-y-4">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">
+            Jigsaw Chat
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900 md:text-5xl">
+            Real-time messaging, ready for your team.
+          </h1>
+          <p className="max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
+            Sign in to open the chat workspace. Foundation setup includes Clerk
+            authentication, Convex wiring, and a responsive app shell.
+          </p>
+        </div>
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <Button asChild href="/sign-in" className="h-11 px-6">
+            Sign in
+          </Button>
+          <Button
+            asChild
+            href="/sign-up"
+            variant="secondary"
+            className="h-11 px-6"
+          >
+            Create account
+          </Button>
+        </div>
+      </div>
+    </main>
   );
 }

@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Jigsaw Chat
 
-## Getting Started
+Phase 1 foundation setup for a real-time messaging app built with:
 
-First, run the development server:
+- Next.js App Router
+- TypeScript
+- Tailwind CSS
+- Clerk authentication
+- Convex backend client wiring
+
+## 1) Install dependencies
+
+```bash
+npm install
+```
+
+## 2) Configure environment variables
+
+Copy `.env.example` to `.env.local` and fill in values from Clerk and Convex.
+
+```bash
+cp .env.example .env.local
+```
+
+Required values:
+
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
+- `CLERK_JWT_ISSUER_DOMAIN`
+- `NEXT_PUBLIC_CONVEX_URL`
+
+## 3) Run development server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Unauthenticated users land on the auth entry page.
+- Sign in/up routes are available at `/sign-in` and `/sign-up`.
+- Authenticated users are redirected to `/chat`, a protected app shell.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Phase 1 deliverables covered
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Stack configured and app boots
+- Clerk wired in root providers and middleware-protected routes
+- Convex React client provider integrated with Clerk auth
+- Responsive chat shell scaffold (sidebar + chat panel)
+- Reusable UI primitive (`Button`) for consistent actions

@@ -38,7 +38,7 @@ npm run dev
 Open `http://localhost:3000`.
 
 - Unauthenticated users land on the auth entry page.
-- Sign in/up routes are available at `/sign-in` and `/sign-up`.
+- Sign in/up routes are available at `/auth/sign-in` and `/auth/sign-up`.
 - Authenticated users are redirected to `/chat`, a protected app shell.
 
 ## Phase 1 deliverables covered

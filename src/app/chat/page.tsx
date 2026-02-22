@@ -14,7 +14,7 @@ export default async function ChatPage() {
   const { userId } = await auth();
 
   if (!userId) {
-    redirect("/sign-in");
+    redirect("/auth/sign-in");
   }
 
   return <AppShell />;

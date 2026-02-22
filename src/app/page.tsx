@@ -48,12 +48,12 @@ export default async function Home() {
           </p>
         </div>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-          <Button asChild href="/sign-in" className="h-11 px-6">
+          <Button asChild href="/auth/sign-in" className="h-11 px-6">
             Sign in
           </Button>
           <Button
             asChild
-            href="/sign-up"
+            href="/auth/sign-up"
             variant="secondary"
             className="h-11 px-6"
           >

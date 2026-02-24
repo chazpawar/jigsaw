@@ -6,16 +6,21 @@ function isSameDay(left: Date, right: Date) {
   );
 }
 
+export function formatMessageTime(timestamp: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(timestamp));
+}
+
 export function formatMessageTimestamp(timestamp: number) {
   const date = new Date(timestamp);
   const now = new Date();
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
 
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  const time = formatMessageTime(timestamp);
 
   if (isSameDay(date, now)) {
     return `Today ${time}`;

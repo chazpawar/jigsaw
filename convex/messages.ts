@@ -112,16 +112,37 @@ export const listForConversation = query({
           };
         }).filter((group) => group.count > 0);
 
+        const topReaction = reactionGroups.reduce<{
+          emoji: AllowedReaction;
+          count: number;
+          reactedByMe: boolean;
+        } | null>((current, group) => {
+          if (!current || group.count > current.count) {
+            return group;
+          }
+
+          return current;
+        }, null);
+
         return {
           _id: message._id,
           senderId: message.senderId,
           senderName: sender?.displayName ?? "Unknown",
           body: message.body,
           createdAt: message.createdAt,
+          replyToMessageId: message.replyToMessageId,
+          replyToSenderName: message.replyToSenderName,
+          replyToBody: message.replyToBody,
+          attachmentUrl: message.attachmentStorageId
+            ? await ctx.storage.getUrl(message.attachmentStorageId)
+            : null,
+          attachmentName: message.attachmentName,
+          attachmentMimeType: message.attachmentMimeType,
+          attachmentSize: message.attachmentSize,
           isMine: message.senderId === currentUser._id,
           isDeleted: message.isDeleted ?? false,
           deletedAt: message.deletedAt,
-          reactions: reactionGroups,
+          reactions: topReaction ? [topReaction] : [],
         };
       }),
     );
@@ -131,7 +152,14 @@ export const listForConversation = query({
 export const send = mutation({
   args: {
     conversationId: v.id("conversations"),
-    body: v.string(),
+    body: v.optional(v.string()),
+    replyToMessageId: v.optional(v.id("messages")),
+    replyToSenderName: v.optional(v.string()),
+    replyToBody: v.optional(v.string()),
+    attachmentStorageId: v.optional(v.id("_storage")),
+    attachmentName: v.optional(v.string()),
+    attachmentMimeType: v.optional(v.string()),
+    attachmentSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUser(ctx);
@@ -140,8 +168,10 @@ export const send = mutation({
       throw new Error("Unauthorized");
     }
 
-    const body = args.body.trim();
-    if (!body) {
+    const body = args.body?.trim() ?? "";
+    const hasAttachment = Boolean(args.attachmentStorageId);
+
+    if (!body && !hasAttachment) {
       throw new Error("Message cannot be empty");
     }
 
@@ -160,12 +190,19 @@ export const send = mutation({
       senderId: currentUser._id,
       body,
       createdAt,
+      replyToMessageId: args.replyToMessageId,
+      replyToSenderName: args.replyToSenderName,
+      replyToBody: args.replyToBody,
+      attachmentStorageId: args.attachmentStorageId,
+      attachmentName: args.attachmentName,
+      attachmentMimeType: args.attachmentMimeType,
+      attachmentSize: args.attachmentSize,
       isDeleted: false,
     });
 
     await ctx.db.patch(args.conversationId, {
       updatedAt: createdAt,
-      lastMessageText: body,
+      lastMessageText: body || args.attachmentName || "Attachment",
       lastMessageAt: createdAt,
       lastMessageSenderId: currentUser._id,
     });
@@ -189,6 +226,18 @@ export const send = mutation({
     }
 
     return messageId;
+  },
+});
+
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const currentUser = await getCurrentUser(ctx);
+    if (!currentUser) {
+      throw new Error("Unauthorized");
+    }
+
+    return await ctx.storage.generateUploadUrl();
   },
 });
 
@@ -314,17 +363,34 @@ export const toggleReaction = mutation({
 
     const existing = await ctx.db
       .query("messageReactions")
-      .withIndex("by_message_user_emoji", (q) =>
-        q
-          .eq("messageId", args.messageId)
-          .eq("userId", currentUser._id)
-          .eq("emoji", args.emoji),
-      )
-      .unique();
+      .withIndex("by_message", (q) => q.eq("messageId", args.messageId))
+      .collect();
 
-    if (existing) {
-      await ctx.db.delete(existing._id);
+    const existingEmoji = existing[0]?.emoji ?? null;
+    const hasSameEmoji = existingEmoji === args.emoji;
+    const existingForUser = existing.filter(
+      (reaction) => reaction.userId === currentUser._id,
+    );
+    const matching = existingForUser.find(
+      (reaction) => reaction.emoji === args.emoji,
+    );
+
+    if (hasSameEmoji) {
+      if (matching) {
+        await ctx.db.delete(matching._id);
+        return;
+      }
+
+      await ctx.db.insert("messageReactions", {
+        messageId: args.messageId,
+        userId: currentUser._id,
+        emoji: args.emoji as AllowedReaction,
+      });
       return;
+    }
+
+    for (const reaction of existing) {
+      await ctx.db.delete(reaction._id);
     }
 
     await ctx.db.insert("messageReactions", {

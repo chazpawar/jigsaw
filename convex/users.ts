@@ -26,6 +26,8 @@ export const upsertFromClerk = mutation({
       throw new Error("Unauthorized");
     }
 
+    const normalizedEmail = args.email?.trim().toLowerCase();
+
     const now = Date.now();
     const existing = await ctx.db
       .query("users")
@@ -36,7 +38,7 @@ export const upsertFromClerk = mutation({
       await ctx.db.patch(existing._id, {
         displayName: args.displayName,
         imageUrl: args.imageUrl,
-        email: args.email,
+        email: normalizedEmail,
         isOnline: true,
         lastSeenAt: now,
       });
@@ -48,7 +50,7 @@ export const upsertFromClerk = mutation({
       clerkId,
       displayName: args.displayName,
       imageUrl: args.imageUrl,
-      email: args.email,
+      email: normalizedEmail,
       isOnline: true,
       lastSeenAt: now,
     });
@@ -77,7 +79,7 @@ export const searchUsers = query({
 
     return users
       .filter((user) => user.clerkId !== currentClerkId)
-      .filter((user) => user.email?.toLowerCase() === normalizedSearch)
+      .filter((user) => user.email?.trim().toLowerCase() === normalizedSearch)
       .sort((a, b) => a.displayName.localeCompare(b.displayName))
       .slice(0, 1)
       .map((user) => ({

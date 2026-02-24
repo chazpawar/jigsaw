@@ -68,23 +68,23 @@ export const searchUsers = query({
     }
 
     const normalizedSearch = args.searchTerm?.trim().toLowerCase() ?? "";
+
+    if (!normalizedSearch) {
+      return [];
+    }
+
     const users = await ctx.db.query("users").collect();
 
     return users
       .filter((user) => user.clerkId !== currentClerkId)
-      .filter((user) => {
-        if (!normalizedSearch) {
-          return true;
-        }
-
-        return user.displayName.toLowerCase().includes(normalizedSearch);
-      })
+      .filter((user) => user.email?.toLowerCase() === normalizedSearch)
       .sort((a, b) => a.displayName.localeCompare(b.displayName))
-      .slice(0, 20)
+      .slice(0, 1)
       .map((user) => ({
         _id: user._id,
         displayName: user.displayName,
         imageUrl: user.imageUrl,
+        email: user.email,
         isOnline: isUserOnline(user.lastSeenAt, user.isOnline),
         lastSeenAt: user.lastSeenAt,
       }));

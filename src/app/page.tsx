@@ -3,29 +3,6 @@ import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
 export default async function Home() {
-  const isClerkConfigured =
-    Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) &&
-    Boolean(process.env.CLERK_SECRET_KEY);
-
-  if (!isClerkConfigured) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#eff6ff,_#f8fafc_52%,_#ffffff)] px-6 py-10">
-        <div className="w-full max-w-3xl rounded-3xl border border-amber-200 bg-amber-50/80 p-8 shadow-xl shadow-amber-100/60 backdrop-blur md:p-12">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-700">
-            Configuration needed
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-amber-900 md:text-4xl">
-            Add Clerk and Convex keys to run authentication.
-          </h1>
-          <p className="mt-3 text-base leading-7 text-amber-800/90">
-            Copy `.env.example` to `.env.local`, add your keys, and restart the
-            dev server.
-          </p>
-        </div>
-      </main>
-    );
-  }
-
   const { userId } = await auth();
 
   if (userId) {

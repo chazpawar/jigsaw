@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import {
   type MutationCtx,
   mutation,
@@ -33,6 +34,108 @@ async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
 
 function makeDirectKey(userIdA: string, userIdB: string) {
   return [userIdA, userIdB].sort().join("::");
+}
+
+type ConversationSummary = {
+  _id: Id<"conversations">;
+  updatedAt: number;
+  createdAt: number;
+  lastMessageText?: string;
+  lastMessageAt?: number;
+  unreadCount: number;
+  type: "direct" | "group";
+  title: string;
+  memberCount: number;
+  otherUser?: {
+    _id: Id<"users">;
+    displayName: string;
+    imageUrl?: string;
+    isOnline: boolean;
+    lastSeenAt?: number;
+  };
+};
+
+async function buildConversationSummary(
+  ctx: QueryCtx,
+  conversationId: Id<"conversations">,
+  currentUserId: Id<"users">,
+): Promise<ConversationSummary | null> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation) {
+    return null;
+  }
+
+  const members = await ctx.db
+    .query("conversationMembers")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+    .collect();
+
+  const readState = await ctx.db
+    .query("conversationReads")
+    .withIndex("by_conversation_user", (q) =>
+      q.eq("conversationId", conversationId).eq("userId", currentUserId),
+    )
+    .unique();
+
+  const lastReadAt = readState?.lastReadAt ?? 0;
+  const messages = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_created_at", (q) =>
+      q.eq("conversationId", conversationId),
+    )
+    .collect();
+
+  const unreadCount = messages.filter(
+    (message) =>
+      message.senderId !== currentUserId &&
+      !message.isDeleted &&
+      message.createdAt > lastReadAt,
+  ).length;
+
+  if (conversation.type === "direct") {
+    const otherMember = members.find(
+      (member) => member.userId !== currentUserId,
+    );
+    if (!otherMember) {
+      return null;
+    }
+
+    const otherUser = await ctx.db.get(otherMember.userId);
+    if (!otherUser) {
+      return null;
+    }
+
+    return {
+      _id: conversation._id,
+      updatedAt: conversation.updatedAt,
+      createdAt: conversation.createdAt,
+      lastMessageText: conversation.lastMessageText,
+      lastMessageAt: conversation.lastMessageAt,
+      unreadCount,
+      type: "direct",
+      title: otherUser.displayName,
+      memberCount: members.length,
+      otherUser: {
+        _id: otherUser._id,
+        displayName: otherUser.displayName,
+        imageUrl: otherUser.imageUrl,
+        isOnline: isUserOnline(otherUser.lastSeenAt, otherUser.isOnline),
+        lastSeenAt: otherUser.lastSeenAt,
+      },
+    };
+  }
+
+  return {
+    _id: conversation._id,
+    updatedAt: conversation.updatedAt,
+    createdAt: conversation.createdAt,
+    lastMessageText: conversation.lastMessageText,
+    lastMessageAt: conversation.lastMessageAt,
+    unreadCount,
+    type: "group",
+    title: conversation.groupName ?? "Untitled Group",
+    memberCount: members.length,
+  };
 }
 
 export const openOrCreateDirectConversation = mutation({
@@ -97,6 +200,61 @@ export const openOrCreateDirectConversation = mutation({
   },
 });
 
+export const createGroupConversation = mutation({
+  args: {
+    name: v.string(),
+    memberIds: v.array(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUser(ctx);
+    if (!currentUser) {
+      throw new Error("Unauthorized");
+    }
+
+    const name = args.name.trim();
+    if (!name) {
+      throw new Error("Group name is required");
+    }
+
+    const uniqueMembers = Array.from(
+      new Set(args.memberIds.map((id) => String(id))),
+    ).map((id) => id as Id<"users">);
+
+    const members = uniqueMembers.includes(currentUser._id)
+      ? uniqueMembers
+      : [...uniqueMembers, currentUser._id];
+
+    if (members.length < 3) {
+      throw new Error("Select at least 2 members to create a group");
+    }
+
+    const now = Date.now();
+    const conversationId = await ctx.db.insert("conversations", {
+      type: "group",
+      groupName: name,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await Promise.all(
+      members.map(async (userId) => {
+        const user = await ctx.db.get(userId);
+        if (!user) {
+          return;
+        }
+
+        await ctx.db.insert("conversationMembers", {
+          conversationId,
+          userId,
+          joinedAt: now,
+        });
+      }),
+    );
+
+    return conversationId;
+  },
+});
+
 export const listForCurrentUser = query({
   args: {},
   handler: async (ctx) => {
@@ -111,74 +269,17 @@ export const listForCurrentUser = query({
       .withIndex("by_user", (q) => q.eq("userId", currentUser._id))
       .collect();
 
-    const rows = await Promise.all(
-      memberships.map(async (membership) => {
-        const conversation = await ctx.db.get(membership.conversationId);
-        if (!conversation) {
-          return null;
-        }
-
-        const members = await ctx.db
-          .query("conversationMembers")
-          .withIndex("by_conversation", (q) =>
-            q.eq("conversationId", membership.conversationId),
-          )
-          .collect();
-
-        const otherMember = members.find(
-          (member) => member.userId !== currentUser._id,
-        );
-        if (!otherMember) {
-          return null;
-        }
-
-        const otherUser = await ctx.db.get(otherMember.userId);
-        if (!otherUser) {
-          return null;
-        }
-
-        const readState = await ctx.db
-          .query("conversationReads")
-          .withIndex("by_conversation_user", (q) =>
-            q
-              .eq("conversationId", membership.conversationId)
-              .eq("userId", currentUser._id),
-          )
-          .unique();
-
-        const lastReadAt = readState?.lastReadAt ?? 0;
-        const messages = await ctx.db
-          .query("messages")
-          .withIndex("by_conversation_created_at", (q) =>
-            q.eq("conversationId", membership.conversationId),
-          )
-          .collect();
-
-        const unreadCount = messages.filter(
-          (message) =>
-            message.senderId !== currentUser._id &&
-            message.createdAt > lastReadAt,
-        ).length;
-
-        return {
-          _id: conversation._id,
-          updatedAt: conversation.updatedAt,
-          createdAt: conversation.createdAt,
-          lastMessageText: conversation.lastMessageText,
-          lastMessageAt: conversation.lastMessageAt,
-          unreadCount,
-          otherUser: {
-            _id: otherUser._id,
-            displayName: otherUser.displayName,
-            imageUrl: otherUser.imageUrl,
-            isOnline: isUserOnline(otherUser.lastSeenAt, otherUser.isOnline),
-            lastSeenAt: otherUser.lastSeenAt,
-          },
-        };
-      }),
+    const summaries = await Promise.all(
+      memberships.map((membership) =>
+        buildConversationSummary(
+          ctx,
+          membership.conversationId,
+          currentUser._id,
+        ),
+      ),
     );
 
-    return rows
+    return summaries
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   },
@@ -192,11 +293,6 @@ export const getConversationOverview = query({
     const currentUser = await getCurrentUser(ctx);
 
     if (!currentUser) {
-      return null;
-    }
-
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) {
       return null;
     }
 
@@ -214,30 +310,25 @@ export const getConversationOverview = query({
       return null;
     }
 
-    const otherMember = membership.find(
-      (member) => member.userId !== currentUser._id,
+    const summary = await buildConversationSummary(
+      ctx,
+      args.conversationId,
+      currentUser._id,
     );
-    if (!otherMember) {
-      return null;
-    }
 
-    const otherUser = await ctx.db.get(otherMember.userId);
-    if (!otherUser) {
+    if (!summary) {
       return null;
     }
 
     return {
       conversationId: args.conversationId,
-      updatedAt: conversation.updatedAt,
-      lastMessageText: conversation.lastMessageText,
-      lastMessageAt: conversation.lastMessageAt,
-      otherUser: {
-        _id: otherUser._id,
-        displayName: otherUser.displayName,
-        imageUrl: otherUser.imageUrl,
-        isOnline: isUserOnline(otherUser.lastSeenAt, otherUser.isOnline),
-        lastSeenAt: otherUser.lastSeenAt,
-      },
+      type: summary.type,
+      title: summary.title,
+      memberCount: summary.memberCount,
+      updatedAt: summary.updatedAt,
+      lastMessageText: summary.lastMessageText,
+      lastMessageAt: summary.lastMessageAt,
+      otherUser: summary.otherUser,
     };
   },
 });

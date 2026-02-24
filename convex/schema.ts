@@ -12,8 +12,9 @@ export default defineSchema({
   }).index("by_clerk_id", ["clerkId"]),
 
   conversations: defineTable({
-    type: v.literal("direct"),
-    directKey: v.string(),
+    type: v.union(v.literal("direct"), v.literal("group")),
+    directKey: v.optional(v.string()),
+    groupName: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     lastMessageText: v.optional(v.string()),
@@ -53,5 +54,21 @@ export default defineSchema({
     senderId: v.id("users"),
     body: v.string(),
     createdAt: v.number(),
+    isDeleted: v.optional(v.boolean()),
+    deletedAt: v.optional(v.number()),
   }).index("by_conversation_created_at", ["conversationId", "createdAt"]),
+
+  messageReactions: defineTable({
+    messageId: v.id("messages"),
+    userId: v.id("users"),
+    emoji: v.union(
+      v.literal("👍"),
+      v.literal("❤️"),
+      v.literal("😂"),
+      v.literal("😮"),
+      v.literal("😢"),
+    ),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_message_user_emoji", ["messageId", "userId", "emoji"]),
 });

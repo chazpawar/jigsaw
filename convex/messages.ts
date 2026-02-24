@@ -8,6 +8,10 @@ import {
 } from "./_generated/server";
 import { getClerkId } from "./auth";
 
+const ALLOWED_REACTIONS = ["👍", "❤️", "😂", "😮", "😢"] as const;
+
+type AllowedReaction = (typeof ALLOWED_REACTIONS)[number];
+
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
   const clerkId = getClerkId(identity);
@@ -49,9 +53,7 @@ async function upsertReadState(
     .unique();
 
   if (existingReadState) {
-    await ctx.db.patch(existingReadState._id, {
-      lastReadAt,
-    });
+    await ctx.db.patch(existingReadState._id, { lastReadAt });
     return;
   }
 
@@ -78,7 +80,6 @@ export const listForConversation = query({
       args.conversationId,
       currentUser._id,
     );
-
     if (!isMember) {
       return [];
     }
@@ -90,13 +91,40 @@ export const listForConversation = query({
       )
       .collect();
 
-    return messages.map((message) => ({
-      _id: message._id,
-      senderId: message.senderId,
-      body: message.body,
-      createdAt: message.createdAt,
-      isMine: message.senderId === currentUser._id,
-    }));
+    return await Promise.all(
+      messages.map(async (message) => {
+        const sender = await ctx.db.get(message.senderId);
+        const reactions = await ctx.db
+          .query("messageReactions")
+          .withIndex("by_message", (q) => q.eq("messageId", message._id))
+          .collect();
+
+        const reactionGroups = ALLOWED_REACTIONS.map((emoji) => {
+          const grouped = reactions.filter(
+            (reaction) => reaction.emoji === emoji,
+          );
+          return {
+            emoji,
+            count: grouped.length,
+            reactedByMe: grouped.some(
+              (reaction) => reaction.userId === currentUser._id,
+            ),
+          };
+        }).filter((group) => group.count > 0);
+
+        return {
+          _id: message._id,
+          senderId: message.senderId,
+          senderName: sender?.displayName ?? "Unknown",
+          body: message.body,
+          createdAt: message.createdAt,
+          isMine: message.senderId === currentUser._id,
+          isDeleted: message.isDeleted ?? false,
+          deletedAt: message.deletedAt,
+          reactions: reactionGroups,
+        };
+      }),
+    );
   },
 });
 
@@ -122,7 +150,6 @@ export const send = mutation({
       args.conversationId,
       currentUser._id,
     );
-
     if (!isMember) {
       throw new Error("Forbidden");
     }
@@ -133,6 +160,7 @@ export const send = mutation({
       senderId: currentUser._id,
       body,
       createdAt,
+      isDeleted: false,
     });
 
     await ctx.db.patch(args.conversationId, {
@@ -180,7 +208,6 @@ export const markConversationRead = mutation({
       args.conversationId,
       currentUser._id,
     );
-
     if (!isMember) {
       return;
     }
@@ -191,5 +218,119 @@ export const markConversationRead = mutation({
       currentUser._id,
       Date.now(),
     );
+  },
+});
+
+export const softDelete = mutation({
+  args: {
+    messageId: v.id("messages"),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUser(ctx);
+    if (!currentUser) {
+      throw new Error("Unauthorized");
+    }
+
+    const message = await ctx.db.get(args.messageId);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    if (message.senderId !== currentUser._id) {
+      throw new Error("You can only delete your own messages");
+    }
+
+    if (message.isDeleted) {
+      return;
+    }
+
+    const deletedAt = Date.now();
+    await ctx.db.patch(message._id, {
+      isDeleted: true,
+      body: "This message was deleted",
+      deletedAt,
+    });
+
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation) {
+      return;
+    }
+
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_created_at", (q) =>
+        q.eq("conversationId", message.conversationId),
+      )
+      .collect();
+
+    const latest = messages[messages.length - 1];
+    if (!latest) {
+      return;
+    }
+
+    await ctx.db.patch(message.conversationId, {
+      updatedAt: Math.max(conversation.updatedAt, deletedAt),
+      lastMessageText: latest.body,
+      lastMessageAt: latest.createdAt,
+      lastMessageSenderId: latest.senderId,
+    });
+  },
+});
+
+export const toggleReaction = mutation({
+  args: {
+    messageId: v.id("messages"),
+    emoji: v.union(
+      v.literal("👍"),
+      v.literal("❤️"),
+      v.literal("😂"),
+      v.literal("😮"),
+      v.literal("😢"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUser(ctx);
+    if (!currentUser) {
+      throw new Error("Unauthorized");
+    }
+
+    const message = await ctx.db.get(args.messageId);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    const isMember = await assertMembership(
+      ctx,
+      message.conversationId,
+      currentUser._id,
+    );
+    if (!isMember) {
+      throw new Error("Forbidden");
+    }
+
+    if (!(ALLOWED_REACTIONS as readonly string[]).includes(args.emoji)) {
+      throw new Error("Unsupported reaction");
+    }
+
+    const existing = await ctx.db
+      .query("messageReactions")
+      .withIndex("by_message_user_emoji", (q) =>
+        q
+          .eq("messageId", args.messageId)
+          .eq("userId", currentUser._id)
+          .eq("emoji", args.emoji),
+      )
+      .unique();
+
+    if (existing) {
+      await ctx.db.delete(existing._id);
+      return;
+    }
+
+    await ctx.db.insert("messageReactions", {
+      messageId: args.messageId,
+      userId: currentUser._id,
+      emoji: args.emoji as AllowedReaction,
+    });
   },
 });

@@ -10,6 +10,7 @@ import { formatMessageTimestamp } from "@/lib/time";
 
 const ONLINE_WINDOW_MS = 30_000;
 const AUTO_SCROLL_THRESHOLD = 48;
+const REACTION_SET = ["👍", "❤️", "😂", "😮", "😢"] as const;
 
 function isOnlineNow(lastSeenAt?: number, isOnline?: boolean) {
   if (!isOnline || !lastSeenAt) {
@@ -17,6 +18,10 @@ function isOnlineNow(lastSeenAt?: number, isOnline?: boolean) {
   }
 
   return Date.now() - lastSeenAt < ONLINE_WINDOW_MS;
+}
+
+function isValidEmailAddress(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function UserAvatar({ name, imageUrl }: { name: string; imageUrl?: string }) {
@@ -34,7 +39,7 @@ function UserAvatar({ name, imageUrl }: { name: string; imageUrl?: string }) {
   }
 
   return (
-    <div className="flex size-9 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+    <div className="flex size-9 items-center justify-center rounded-full bg-neutral-700 text-xs font-semibold text-neutral-100">
       {fallback}
     </div>
   );
@@ -44,29 +49,45 @@ type DiscoverableUser = {
   _id: Id<"users">;
   displayName: string;
   imageUrl?: string;
+  email?: string;
   isOnline: boolean;
   lastSeenAt?: number;
 };
 
 type SidebarConversation = {
   _id: Id<"conversations">;
+  type: "direct" | "group";
+  title: string;
+  memberCount: number;
   updatedAt: number;
   lastMessageText?: string;
   lastMessageAt?: number;
   unreadCount: number;
-  otherUser: DiscoverableUser;
+  otherUser?: DiscoverableUser;
 };
 
 type ConversationOverview = {
   conversationId: Id<"conversations">;
-  otherUser: DiscoverableUser;
+  type: "direct" | "group";
+  title: string;
+  memberCount: number;
+  otherUser?: DiscoverableUser;
 };
 
 type Message = {
   _id: Id<"messages">;
+  senderId: Id<"users">;
+  senderName: string;
   body: string;
   createdAt: number;
   isMine: boolean;
+  isDeleted: boolean;
+  deletedAt?: number;
+  reactions: Array<{
+    emoji: "👍" | "❤️" | "😂" | "😮" | "😢";
+    count: number;
+    reactedByMe: boolean;
+  }>;
 };
 
 type TypingState = {
@@ -83,8 +104,23 @@ export function AppShell() {
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [presenceTick, setPresenceTick] = useState(0);
   const [unseenIncomingCount, setUnseenIncomingCount] = useState(0);
+  const [isSending, setIsSending] = useState(false);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [conversationActionError, setConversationActionError] = useState<
+    string | null
+  >(null);
+  const [failedMessageDraft, setFailedMessageDraft] = useState<string | null>(
+    null,
+  );
+  const [groupName, setGroupName] = useState("");
+  const [selectedGroupMembers, setSelectedGroupMembers] = useState<
+    Id<"users">[]
+  >([]);
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<number | null>(null);
   const previousMessageCountRef = useRef(0);
@@ -96,31 +132,48 @@ export function AppShell() {
     api.conversations.openOrCreateDirectConversation,
   );
   const sendMessage = useMutation(api.messages.send);
+  const softDeleteMessage = useMutation(api.messages.softDelete);
+  const toggleReaction = useMutation(api.messages.toggleReaction);
   const markConversationRead = useMutation(api.messages.markConversationRead);
   const setTyping = useMutation(api.typing.setTyping);
+  const createGroupConversation = useMutation(
+    api.conversations.createGroupConversation,
+  );
 
-  const discoverableUsers = (useQuery(api.users.searchUsers, { searchTerm }) ??
-    []) as DiscoverableUser[];
-  const conversations = (useQuery(api.conversations.listForCurrentUser) ??
-    []) as SidebarConversation[];
-  const selectedConversation = useQuery(
+  const discoverableUsersResult = useQuery(api.users.searchUsers, {
+    searchTerm,
+  });
+  const conversationsResult = useQuery(api.conversations.listForCurrentUser);
+  const selectedConversationResult = useQuery(
     api.conversations.getConversationOverview,
     selectedConversationId
       ? { conversationId: selectedConversationId }
       : "skip",
   ) as ConversationOverview | null | undefined;
-  const messages = (useQuery(
+  const messagesResult = useQuery(
     api.messages.listForConversation,
     selectedConversationId
       ? { conversationId: selectedConversationId }
       : "skip",
-  ) ?? []) as Message[];
-  const typingState = useQuery(
+  ) as Message[] | undefined;
+  const typingStateResult = useQuery(
     api.typing.getForConversation,
     selectedConversationId
       ? { conversationId: selectedConversationId }
       : "skip",
   ) as TypingState | null | undefined;
+
+  const discoverableUsers = (discoverableUsersResult ??
+    []) as DiscoverableUser[];
+  const conversations = (conversationsResult ?? []) as SidebarConversation[];
+  const selectedConversation = selectedConversationResult;
+  const messages = (messagesResult ?? []) as Message[];
+  const typingState = typingStateResult;
+
+  const isDiscoverableUsersLoading = discoverableUsersResult === undefined;
+  const isConversationsLoading = conversationsResult === undefined;
+  const isMessagesLoading =
+    Boolean(selectedConversationId) && messagesResult === undefined;
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -175,6 +228,8 @@ export function AppShell() {
       return;
     }
 
+    setSendError(null);
+    setFailedMessageDraft(null);
     setSelectedConversationId(conversations[0]?._id ?? null);
   }, [conversations, selectedConversationId]);
 
@@ -264,9 +319,13 @@ export function AppShell() {
     return () => window.clearTimeout(timeout);
   }, [typingState]);
 
-  const hasSearch = searchTerm.trim().length > 0;
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const hasSearch = normalizedSearchTerm.length > 0;
+  const hasValidSearchEmail = isValidEmailAddress(normalizedSearchTerm);
+  const matchedUser = discoverableUsers[0] ?? null;
+  const canSendInvite = hasValidSearchEmail && !matchedUser;
   const selectedConversationLabel =
-    selectedConversation?.otherUser.displayName ?? "Select a conversation";
+    selectedConversation?.title ?? "Select a conversation";
 
   const currentConversation = useMemo(() => {
     if (!selectedConversationId) {
@@ -290,21 +349,19 @@ export function AppShell() {
   void presenceTick;
 
   return (
-    <main className="min-h-screen bg-slate-100 p-0 md:p-6">
-      <div className="mx-auto flex h-screen w-full max-w-6xl flex-col overflow-hidden border border-slate-200 bg-white shadow-xl shadow-slate-200/70 md:h-[calc(100vh-3rem)] md:flex-row md:rounded-2xl">
+    <main className="min-h-screen bg-[#0b0c0f]">
+      <div className="flex h-screen w-full flex-col overflow-hidden bg-[#0f1013] md:flex-row">
         <aside
-          className={`bg-slate-50 md:flex md:w-96 md:flex-col md:border-r md:border-slate-200 ${
+          className={`bg-gradient-to-b from-[#202225] to-[#1a1b1f] md:flex md:w-[22%] md:min-w-[320px] md:max-w-[380px] md:flex-col md:border-r md:border-neutral-800 ${
             isMobileChatOpen ? "hidden" : "flex flex-1 flex-col"
           }`}
         >
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 md:px-5">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Jigsaw Chat
-              </p>
-              <h1 className="text-lg font-semibold text-slate-900">
-                Conversations
-              </h1>
+          <div className="flex h-16 items-center justify-between border-b border-neutral-700/80 px-4 md:px-5">
+            <div className="flex items-center gap-3">
+              <button type="button" className="text-lg text-neutral-300">
+                ☰
+              </button>
+              <h1 className="text-xl font-semibold text-neutral-100">Chats</h1>
             </div>
             <UserButton
               appearance={{ elements: { avatarBox: "size-9" } }}
@@ -312,93 +369,258 @@ export function AppShell() {
             />
           </div>
 
-          <div className="space-y-3 border-b border-slate-200 px-4 py-4 md:px-5">
-            <Button
-              variant="secondary"
-              className="w-full justify-start"
-              onClick={() => searchInputRef.current?.focus()}
-            >
-              New conversation
-            </Button>
+          <div className="space-y-3 border-b border-neutral-700/80 px-4 py-4 md:px-5">
             <input
-              ref={searchInputRef}
               value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search people by name"
-              className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none ring-offset-2 placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              onChange={(event) => {
+                setSearchTerm(event.target.value);
+                setInviteFeedback(null);
+                setInviteError(null);
+              }}
+              placeholder="Search by email address"
+              className="h-10 w-full rounded-xl border border-neutral-600 bg-neutral-800 px-3 text-sm text-neutral-100 outline-none ring-offset-2 placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-700"
             />
+            <details className="rounded-xl border border-neutral-700 bg-neutral-900/50 p-3">
+              <summary className="cursor-pointer text-sm font-medium text-neutral-200">
+                Create group
+              </summary>
+              <div className="mt-3 space-y-2">
+                <input
+                  value={groupName}
+                  onChange={(event) => setGroupName(event.target.value)}
+                  placeholder="Group name"
+                  className="h-9 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-2 text-sm text-neutral-100"
+                />
+                <p className="text-[11px] text-neutral-400">
+                  Select at least 2 members to create a group.
+                </p>
+                <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-neutral-700 p-2">
+                  {discoverableUsers.map((person) => {
+                    const selected = selectedGroupMembers.includes(person._id);
+                    return (
+                      <label
+                        key={person._id}
+                        className="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+                      >
+                        <span className="truncate">{person.displayName}</span>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => {
+                            setSelectedGroupMembers((previous) =>
+                              selected
+                                ? previous.filter((id) => id !== person._id)
+                                : [...previous, person._id],
+                            );
+                          }}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+                <Button
+                  className="h-9 w-full bg-neutral-100 text-neutral-900 hover:bg-neutral-300"
+                  disabled={
+                    isCreatingGroup ||
+                    !groupName.trim() ||
+                    selectedGroupMembers.length < 2
+                  }
+                  onClick={async () => {
+                    setConversationActionError(null);
+
+                    if (selectedGroupMembers.length < 2) {
+                      setConversationActionError(
+                        "Select at least 2 members to create a group.",
+                      );
+                      return;
+                    }
+
+                    setIsCreatingGroup(true);
+
+                    try {
+                      const conversationId = await createGroupConversation({
+                        name: groupName,
+                        memberIds: selectedGroupMembers,
+                      });
+                      setGroupName("");
+                      setSelectedGroupMembers([]);
+                      setSelectedConversationId(conversationId);
+                      setMobileView("chat");
+                    } catch {
+                      setConversationActionError(
+                        "Could not create group. Select members and try again.",
+                      );
+                    } finally {
+                      setIsCreatingGroup(false);
+                    }
+                  }}
+                >
+                  {isCreatingGroup ? "Creating..." : "Create group"}
+                </Button>
+              </div>
+            </details>
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-4 md:px-5">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            {conversationActionError ? (
+              <div className="mb-3 rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
+                {conversationActionError}
+              </div>
+            ) : null}
+
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">
               Start a conversation
             </p>
             <div className="space-y-2">
-              {discoverableUsers.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
-                  {hasSearch ? "No users found." : "No users available yet."}
+              {!hasSearch ? (
+                <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
+                  Enter a friend&apos;s email to find them.
                 </div>
-              ) : (
-                discoverableUsers.map((person) => {
-                  const online = isOnlineNow(
-                    person.lastSeenAt,
-                    person.isOnline,
-                  );
+              ) : !hasValidSearchEmail ? (
+                <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
+                  Enter a valid email address to search.
+                </div>
+              ) : isDiscoverableUsersLoading ? (
+                <div className="rounded-xl border border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
+                  Searching user...
+                </div>
+              ) : matchedUser ? (
+                <button
+                  key={matchedUser._id}
+                  type="button"
+                  className="flex w-full items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900/70 p-3 text-left transition hover:border-neutral-500 hover:bg-neutral-800"
+                  onClick={async () => {
+                    setConversationActionError(null);
+                    setSendError(null);
+                    setFailedMessageDraft(null);
 
-                  return (
-                    <button
-                      key={person._id}
+                    try {
+                      const conversationId = await openOrCreateConversation({
+                        peerUserId: matchedUser._id,
+                      });
+                      setSelectedConversationId(conversationId);
+                      setMobileView("chat");
+                    } catch {
+                      setConversationActionError(
+                        "Could not open conversation. Please try again.",
+                      );
+                    }
+                  }}
+                >
+                  <div className="relative">
+                    <UserAvatar
+                      name={matchedUser.displayName}
+                      imageUrl={matchedUser.imageUrl}
+                    />
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 block size-2.5 rounded-full border border-white ${
+                        isOnlineNow(
+                          matchedUser.lastSeenAt,
+                          matchedUser.isOnline,
+                        )
+                          ? "bg-emerald-500"
+                          : "bg-slate-300"
+                      }`}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-neutral-100">
+                      {matchedUser.displayName}
+                    </p>
+                    <p className="truncate text-xs text-neutral-400">
+                      {matchedUser.email ?? normalizedSearchTerm}
+                    </p>
+                  </div>
+                </button>
+              ) : (
+                <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
+                  <p>No registered user found for this email.</p>
+                  <div className="mt-3">
+                    <Button
                       type="button"
-                      className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-100"
+                      className="h-8 px-3 text-xs"
+                      disabled={!canSendInvite || isSendingInvite}
                       onClick={async () => {
-                        const conversationId = await openOrCreateConversation({
-                          peerUserId: person._id,
-                        });
-                        setSelectedConversationId(conversationId);
-                        setMobileView("chat");
+                        setIsSendingInvite(true);
+                        setInviteFeedback(null);
+                        setInviteError(null);
+
+                        try {
+                          const response = await fetch("/api/invitations", {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                              email: normalizedSearchTerm,
+                              inviterName:
+                                user?.fullName ?? user?.username ?? undefined,
+                            }),
+                          });
+                          const payload = (await response.json()) as {
+                            error?: string;
+                          };
+
+                          if (!response.ok) {
+                            setInviteError(
+                              payload.error ??
+                                "Could not send invite right now. Please try again.",
+                            );
+                            return;
+                          }
+
+                          setInviteFeedback(
+                            `Invitation sent to ${normalizedSearchTerm}.`,
+                          );
+                        } catch {
+                          setInviteError(
+                            "Could not send invite right now. Please try again.",
+                          );
+                        } finally {
+                          setIsSendingInvite(false);
+                        }
                       }}
                     >
-                      <div className="relative">
-                        <UserAvatar
-                          name={person.displayName}
-                          imageUrl={person.imageUrl}
-                        />
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 block size-2.5 rounded-full border border-white ${
-                            online ? "bg-emerald-500" : "bg-slate-300"
-                          }`}
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-900">
-                          {person.displayName}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {online ? "Online" : "Offline"}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })
+                      {isSendingInvite ? "Sending invite..." : "Send invite"}
+                    </Button>
+                  </div>
+                  {inviteFeedback ? (
+                    <p className="mt-2 text-xs text-emerald-300">
+                      {inviteFeedback}
+                    </p>
+                  ) : null}
+                  {inviteError ? (
+                    <p className="mt-2 text-xs text-rose-300">{inviteError}</p>
+                  ) : null}
+                </div>
               )}
             </div>
 
-            <p className="mb-2 mt-6 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            <p className="mb-2 mt-6 text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">
               Existing conversations
             </p>
             <div className="space-y-2">
-              {conversations.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+              {isConversationsLoading ? (
+                <div className="rounded-xl border border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
+                  Loading conversations...
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
                   No conversations yet. Start chatting with someone above.
                 </div>
               ) : (
                 conversations.map((conversation) => {
                   const isSelected =
                     conversation._id === selectedConversationId;
-                  const online = isOnlineNow(
-                    conversation.otherUser.lastSeenAt,
-                    conversation.otherUser.isOnline,
-                  );
+                  const online = conversation.otherUser
+                    ? isOnlineNow(
+                        conversation.otherUser.lastSeenAt,
+                        conversation.otherUser.isOnline,
+                      )
+                    : false;
+                  const avatarName =
+                    conversation.otherUser?.displayName ?? conversation.title;
+                  const avatarImage = conversation.otherUser?.imageUrl;
 
                   return (
                     <button
@@ -408,30 +630,30 @@ export function AppShell() {
                         setSelectedConversationId(conversation._id);
                         setMobileView("chat");
                         setUnseenIncomingCount(0);
+                        setSendError(null);
+                        setFailedMessageDraft(null);
+                        setConversationActionError(null);
                       }}
                       className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${
                         isSelected
-                          ? "border-slate-400 bg-slate-100"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-100"
+                          ? "border-neutral-400 bg-neutral-700/50"
+                          : "border-neutral-700 bg-neutral-900/70 hover:border-neutral-500 hover:bg-neutral-800"
                       }`}
                     >
                       <div className="relative">
-                        <UserAvatar
-                          name={conversation.otherUser.displayName}
-                          imageUrl={conversation.otherUser.imageUrl}
-                        />
+                        <UserAvatar name={avatarName} imageUrl={avatarImage} />
                         <span
-                          className={`absolute -bottom-0.5 -right-0.5 block size-2.5 rounded-full border border-white ${
-                            online ? "bg-emerald-500" : "bg-slate-300"
+                          className={`absolute -bottom-0.5 -right-0.5 block size-2.5 rounded-full border border-neutral-900 ${
+                            online ? "bg-emerald-500" : "bg-neutral-500"
                           }`}
                         />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <p className="truncate text-sm font-medium text-slate-900">
-                            {conversation.otherUser.displayName}
+                          <p className="truncate text-sm font-medium text-neutral-100">
+                            {conversation.title}
                           </p>
-                          <p className="shrink-0 text-[11px] text-slate-500">
+                          <p className="shrink-0 text-[11px] text-neutral-400">
                             {formatMessageTimestamp(
                               conversation.lastMessageAt ??
                                 conversation.updatedAt,
@@ -439,12 +661,16 @@ export function AppShell() {
                           </p>
                         </div>
                         <div className="mt-0.5 flex items-center justify-between gap-2">
-                          <p className="truncate text-xs text-slate-500">
+                          <p className="truncate text-xs text-neutral-400">
+                            {conversation.type === "group"
+                              ? `${conversation.memberCount} members`
+                              : "Direct message"}
+                            {" - "}
                             {conversation.lastMessageText ??
                               "Conversation created"}
                           </p>
                           {conversation.unreadCount > 0 ? (
-                            <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-slate-900 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                            <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-white px-1.5 py-0.5 text-[11px] font-medium text-black">
                               {conversation.unreadCount}
                             </span>
                           ) : null}
@@ -463,24 +689,26 @@ export function AppShell() {
             isMobileChatOpen ? "flex" : "hidden md:flex"
           }`}
         >
-          <header className="border-b border-slate-200 px-4 py-3 md:px-6">
-            <div className="flex items-center gap-3">
+          <header className="flex h-16 items-center border-b border-neutral-700/80 bg-gradient-to-b from-[#202225] to-[#1a1b1f] px-4 md:px-6">
+            <div className="flex w-full items-center gap-3">
               <button
                 type="button"
                 onClick={() => setMobileView("list")}
-                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-600 md:hidden"
+                className="rounded-lg border border-neutral-700 px-2 py-1 text-sm text-neutral-300 md:hidden"
               >
                 Back
               </button>
               <div>
-                <h2 className="text-base font-semibold text-slate-900 md:text-lg">
+                <h2 className="text-base font-semibold text-neutral-100 md:text-lg">
                   {selectedConversationLabel}
                 </h2>
-                <p className="text-sm text-slate-500">
+                <p className="truncate text-sm text-neutral-400">
                   {selectedConversation
                     ? headerTimestamp
                       ? `Last activity: ${headerTimestamp}`
-                      : "Direct conversation connected in real time."
+                      : selectedConversation.type === "group"
+                        ? `${selectedConversation.memberCount} members in this group`
+                        : "Direct conversation connected in real time."
                     : "Choose a user from the left to open or create a direct conversation."}
                 </p>
               </div>
@@ -488,13 +716,16 @@ export function AppShell() {
           </header>
 
           {!selectedConversationId ? (
-            <div className="flex flex-1 items-center justify-center p-6">
-              <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-slate-50 p-6 text-center">
-                <p className="text-sm font-medium text-slate-700">
-                  No active conversation
+            <div className="flex flex-1 items-center justify-center bg-[#0a0b0d] p-6">
+              <div className="text-center">
+                <div className="mx-auto mb-5 flex size-20 items-center justify-center rounded-full border-4 border-dashed border-neutral-300 text-3xl text-neutral-100">
+                  💬
+                </div>
+                <p className="text-3xl font-semibold text-neutral-100">
+                  Welcome to Jigsaw
                 </p>
-                <p className="mt-2 text-sm text-slate-500">
-                  Pick a teammate to initialize your first direct thread.
+                <p className="mt-2 text-base text-neutral-400">
+                  Select a conversation from the left to start chatting.
                 </p>
               </div>
             </div>
@@ -513,10 +744,14 @@ export function AppShell() {
                     setUnseenIncomingCount(0);
                   }
                 }}
-                className="relative flex-1 space-y-3 overflow-y-auto p-4 md:p-6"
+                className="relative flex-1 space-y-3 overflow-y-auto bg-[#0a0b0d] p-4 md:p-6"
               >
-                {messages.length === 0 ? (
-                  <div className="mx-auto w-full max-w-md rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
+                {isMessagesLoading ? (
+                  <div className="mx-auto w-full max-w-md rounded-2xl border border-neutral-700 bg-neutral-900 p-5 text-center text-sm text-neutral-400">
+                    Loading messages...
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="mx-auto w-full max-w-md rounded-2xl border border-dashed border-neutral-700 bg-neutral-900 p-5 text-center text-sm text-neutral-400">
                     No messages yet. Send the first message.
                   </div>
                 ) : (
@@ -528,20 +763,76 @@ export function AppShell() {
                       <div
                         className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
                           message.isMine
-                            ? "bg-slate-900 text-white"
-                            : "border border-slate-200 bg-white text-slate-900"
+                            ? "bg-[#2f2f34] text-white"
+                            : "border border-neutral-700 bg-[#1b1c20] text-neutral-100"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap break-words">
+                        {!message.isMine ? (
+                          <p className="mb-1 text-[11px] font-semibold text-neutral-400">
+                            {message.senderName}
+                          </p>
+                        ) : null}
+                        <p
+                          className={`whitespace-pre-wrap break-words ${
+                            message.isDeleted ? "italic opacity-80" : ""
+                          }`}
+                        >
                           {message.body}
                         </p>
                         <p
                           className={`mt-2 text-[11px] ${
-                            message.isMine ? "text-slate-300" : "text-slate-500"
+                            message.isMine
+                              ? "text-neutral-300"
+                              : "text-neutral-400"
                           }`}
                         >
                           {formatMessageTimestamp(message.createdAt)}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {REACTION_SET.map((emoji) => {
+                            const reactions = message.reactions ?? [];
+                            const existing = reactions.find(
+                              (reaction) => reaction.emoji === emoji,
+                            );
+                            const count = existing?.count ?? 0;
+                            const reactedByMe = existing?.reactedByMe ?? false;
+
+                            return (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={async () => {
+                                  await toggleReaction({
+                                    messageId: message._id,
+                                    emoji,
+                                  });
+                                }}
+                                className={`rounded-full border px-1.5 py-0.5 text-[11px] ${
+                                  reactedByMe
+                                    ? "border-neutral-500 bg-neutral-200 text-neutral-900"
+                                    : "border-transparent bg-black/20 text-current"
+                                }`}
+                              >
+                                {emoji}
+                                {count > 0 ? ` ${count}` : ""}
+                              </button>
+                            );
+                          })}
+
+                          {message.isMine && !message.isDeleted ? (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await softDeleteMessage({
+                                  messageId: message._id,
+                                });
+                              }}
+                              className="rounded-full border border-rose-200 px-1.5 py-0.5 text-[11px] text-rose-600"
+                            >
+                              Delete
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   ))
@@ -549,7 +840,7 @@ export function AppShell() {
 
                 {typingState ? (
                   <div className="flex justify-start">
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs text-slate-500">
+                    <div className="rounded-2xl border border-neutral-700 bg-[#1b1c20] px-4 py-2 text-xs text-neutral-300">
                       {typingState.displayName} is typing...
                     </div>
                   </div>
@@ -575,7 +866,7 @@ export function AppShell() {
               </div>
 
               <form
-                className="border-t border-slate-200 p-3 md:p-4"
+                className="border-t border-neutral-800 bg-[#111216] p-3 md:p-4"
                 onSubmit={async (event) => {
                   event.preventDefault();
 
@@ -583,30 +874,83 @@ export function AppShell() {
                     return;
                   }
 
-                  await sendMessage({
-                    conversationId: selectedConversationId,
-                    body: draftMessage,
-                  });
+                  setIsSending(true);
+                  setSendError(null);
 
-                  void setTyping({
-                    conversationId: selectedConversationId,
-                    isTyping: false,
-                  });
+                  try {
+                    await sendMessage({
+                      conversationId: selectedConversationId,
+                      body: draftMessage,
+                    });
 
-                  setDraftMessage("");
-                  setUnseenIncomingCount(0);
+                    void setTyping({
+                      conversationId: selectedConversationId,
+                      isTyping: false,
+                    });
+
+                    setFailedMessageDraft(null);
+                    setDraftMessage("");
+                    setUnseenIncomingCount(0);
+                  } catch {
+                    setSendError(
+                      "Message failed to send. Check connection and retry.",
+                    );
+                    setFailedMessageDraft(draftMessage);
+                  } finally {
+                    setIsSending(false);
+                  }
                 }}
               >
+                {sendError ? (
+                  <div className="mb-2 rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{sendError}</span>
+                      {failedMessageDraft && selectedConversationId ? (
+                        <button
+                          type="button"
+                          className="rounded-md border border-rose-500/40 px-2 py-1 text-[11px] font-medium text-rose-200"
+                          onClick={async () => {
+                            setIsSending(true);
+                            setSendError(null);
+
+                            try {
+                              await sendMessage({
+                                conversationId: selectedConversationId,
+                                body: failedMessageDraft,
+                              });
+
+                              setFailedMessageDraft(null);
+                              setDraftMessage("");
+                            } catch {
+                              setSendError(
+                                "Retry failed. Please try once more in a moment.",
+                              );
+                            } finally {
+                              setIsSending(false);
+                            }
+                          }}
+                        >
+                          Retry
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="flex items-end gap-2">
                   <textarea
                     value={draftMessage}
                     onChange={(event) => setDraftMessage(event.target.value)}
                     rows={2}
                     placeholder="Type a message"
-                    className="max-h-32 min-h-11 flex-1 resize-y rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-offset-2 placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                    className="max-h-32 min-h-11 flex-1 resize-y rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none ring-offset-2 placeholder:text-neutral-500 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-700"
                   />
-                  <Button type="submit" className="h-11 px-5">
-                    Send
+                  <Button
+                    type="submit"
+                    className="h-11 px-5"
+                    disabled={isSending || !draftMessage.trim()}
+                  >
+                    {isSending ? "Sending..." : "Send"}
                   </Button>
                 </div>
               </form>

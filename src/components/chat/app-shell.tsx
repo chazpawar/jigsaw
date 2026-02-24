@@ -165,7 +165,7 @@ export function AppShell() {
   const [selectedConversationId, setSelectedConversationId] =
     useState<Id<"conversations"> | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
-  const [presenceTick, setPresenceTick] = useState(0);
+  const [, setPresenceTick] = useState(0);
   const [unseenIncomingCount, setUnseenIncomingCount] = useState(0);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -380,8 +380,9 @@ export function AppShell() {
       return;
     }
 
-    const messageCount = messages.length;
-    void messageCount;
+    if (messages.length === 0) {
+      return;
+    }
 
     void markConversationRead({ conversationId: selectedConversationId });
   }, [markConversationRead, messages, selectedConversationId]);
@@ -558,17 +559,15 @@ export function AppShell() {
   const isMobileChatOpen =
     mobileView === "chat" && Boolean(selectedConversationId);
 
-  void presenceTick;
-
   return (
     <main className="min-h-screen bg-[#0b0c0f]">
       <div className="flex h-screen w-full flex-col overflow-hidden bg-[#0f1013] md:flex-row">
         <aside
-          className={`bg-gradient-to-b from-[#202225] to-[#1a1b1f] md:flex md:w-[22%] md:min-w-[320px] md:max-w-[380px] md:flex-col md:border-r md:border-neutral-800 ${
+          className={`bg-[#16171b] md:flex md:w-[22%] md:min-w-[320px] md:max-w-[380px] md:flex-col md:border-r md:border-neutral-700/40 ${
             isMobileChatOpen ? "hidden" : "flex flex-1 flex-col"
           }`}
         >
-          <div className="flex h-16 items-center justify-between border-b border-neutral-700/80 px-4 md:px-5">
+          <div className="flex h-16 items-center justify-between px-4 md:px-5">
             <div className="flex items-center gap-3">
               <button type="button" className="text-lg text-neutral-300">
                 <List size={18} weight="bold" />
@@ -581,7 +580,7 @@ export function AppShell() {
             />
           </div>
 
-          <div className="space-y-3 border-b border-neutral-700/80 px-4 py-4 md:px-5">
+          <div className="space-y-3 px-4 py-4 md:px-5">
             <input
               value={searchTerm}
               onChange={(event) => {
@@ -590,7 +589,7 @@ export function AppShell() {
                 setInviteError(null);
               }}
               placeholder="Search by email address"
-              className="h-10 w-full rounded-xl border border-neutral-600 bg-neutral-800 px-3 text-sm text-neutral-100 outline-none ring-offset-2 placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-700"
+              className="h-10 w-full rounded-xl bg-[#3a3b40] px-3 text-sm text-neutral-100 outline-none ring-offset-2 placeholder:text-neutral-300 focus:ring-2 focus:ring-neutral-500/70"
             />
           </div>
 
@@ -601,15 +600,8 @@ export function AppShell() {
               </div>
             ) : null}
 
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              Start a conversation
-            </p>
-            <div className="space-y-2">
-              {!hasSearch ? (
-                <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
-                  Enter a friend&apos;s email to find them.
-                </div>
-              ) : !hasValidSearchEmail ? (
+            <div className="space-y-2.5">
+              {!hasSearch ? null : !hasValidSearchEmail ? (
                 <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
                   Enter a valid email address to search.
                 </div>
@@ -704,10 +696,6 @@ export function AppShell() {
                 </div>
               )}
             </div>
-
-            <p className="mb-2 mt-6 text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              Existing conversations
-            </p>
             <div className="space-y-2">
               {isConversationsLoading ? (
                 <div className="rounded-xl border border-neutral-700 bg-neutral-900/70 p-4 text-sm text-neutral-400">
@@ -743,10 +731,10 @@ export function AppShell() {
                         setFailedMessageDraft(null);
                         setConversationActionError(null);
                       }}
-                      className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${
+                      className={`flex w-full items-start gap-3 rounded-2xl p-3 text-left transition ${
                         isSelected
-                          ? "border-neutral-400 bg-neutral-700/50"
-                          : "border-neutral-700 bg-neutral-900/70 hover:border-neutral-500 hover:bg-neutral-800"
+                          ? "bg-[#4a4b50]"
+                          : "bg-transparent hover:bg-[#3a3b40]"
                       }`}
                     >
                       <div className="relative">
@@ -762,7 +750,7 @@ export function AppShell() {
                           <p className="truncate text-sm font-medium text-neutral-100">
                             {conversation.title}
                           </p>
-                          <p className="shrink-0 text-[11px] text-neutral-400">
+                          <p className="shrink-0 text-[12px] text-neutral-300/85">
                             {formatMessageTimestamp(
                               conversation.lastMessageAt ??
                                 conversation.updatedAt,
@@ -770,13 +758,11 @@ export function AppShell() {
                           </p>
                         </div>
                         <div className="mt-0.5 flex items-center justify-between gap-2">
-                          <p className="truncate text-xs text-neutral-400">
-                            {conversation.type === "group"
-                              ? `${conversation.memberCount} members`
-                              : "Direct message"}
-                            {" - "}
+                          <p className="line-clamp-2 text-sm text-neutral-300/90">
                             {conversation.lastMessageText ??
-                              "Conversation created"}
+                              (conversation.type === "group"
+                                ? `${conversation.memberCount} members`
+                                : "Conversation created")}
                           </p>
                           {conversation.unreadCount > 0 ? (
                             <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-white px-1.5 py-0.5 text-[11px] font-medium text-black">
@@ -794,11 +780,11 @@ export function AppShell() {
         </aside>
 
         <section
-          className={`flex flex-1 flex-col ${
+          className={`flex flex-1 flex-col bg-[#0a0b0d] ${
             isMobileChatOpen ? "flex" : "hidden md:flex"
           }`}
         >
-          <header className="flex h-16 items-center border-b border-neutral-700/80 bg-gradient-to-b from-[#202225] to-[#1a1b1f] px-4 md:px-6">
+          <header className="relative z-10 flex h-16 items-center bg-[#0a0b0d] px-4 shadow-[0_6px_14px_rgba(0,0,0,0.45)] md:px-6">
             <div className="flex w-full items-center gap-3">
               <button
                 type="button"
@@ -944,7 +930,7 @@ export function AppShell() {
 
                         {activeMessageMenuId === message._id ? (
                           <div
-                            className={`absolute top-1/2 z-30 min-w-40 -translate-y-1/2 rounded-xl bg-[#3a3a3f] p-2 text-xs shadow-xl ${
+                            className={`absolute top-0 z-30 max-h-[70vh] min-w-40 overflow-y-auto rounded-xl bg-[#3a3a3f] p-2 text-xs shadow-xl ${
                               message.isMine
                                 ? "right-full mr-14"
                                 : "left-full ml-14"
@@ -1048,7 +1034,7 @@ export function AppShell() {
 
                         {activeReactionMessageId === message._id ? (
                           <div
-                            className={`absolute top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 rounded-full bg-[#0f1013] p-1 ${
+                            className={`absolute top-0 z-20 flex items-center gap-1 rounded-full bg-[#0f1013] p-1 ${
                               message.isMine
                                 ? "right-full mr-14"
                                 : "left-full ml-14"
@@ -1517,6 +1503,21 @@ export function AppShell() {
                   <textarea
                     value={draftMessage}
                     onChange={(event) => setDraftMessage(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.shiftKey) {
+                        return;
+                      }
+
+                      if (
+                        isSending ||
+                        (!draftMessage.trim() && !draftAttachment)
+                      ) {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }}
                     rows={1}
                     placeholder="Message"
                     className="h-11 max-h-32 min-h-11 min-w-0 flex-1 resize-none overflow-y-auto rounded-xl bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 outline-none ring-offset-2 placeholder:text-neutral-500 "

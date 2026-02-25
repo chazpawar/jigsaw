@@ -288,7 +288,11 @@ export function useScrollRestoreAndIncoming({
       container.scrollHeight - container.scrollTop - container.clientHeight;
     const atBottom = distanceFromBottom <= 48;
 
-    if (!hasIncoming || atBottom) {
+    if (!hasIncoming) {
+      return;
+    }
+
+    if (atBottom) {
       container.scrollTop = container.scrollHeight;
       onResetUnseen();
       return;

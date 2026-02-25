@@ -31,12 +31,14 @@ async function assertMembership(
   conversationId: Id<"conversations">,
   userId: Id<"users">,
 ) {
-  const members = await ctx.db
+  const member = await ctx.db
     .query("conversationMembers")
-    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
-    .collect();
+    .withIndex("by_conversation_user", (q) =>
+      q.eq("conversationId", conversationId).eq("userId", userId),
+    )
+    .unique();
 
-  return members.some((member) => member.userId === userId);
+  return Boolean(member);
 }
 
 async function upsertReadState(
@@ -93,7 +95,6 @@ export const listForConversation = query({
 
     return await Promise.all(
       messages.map(async (message) => {
-        const sender = await ctx.db.get(message.senderId);
         const reactions = await ctx.db
           .query("messageReactions")
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
@@ -127,7 +128,7 @@ export const listForConversation = query({
         return {
           _id: message._id,
           senderId: message.senderId,
-          senderName: sender?.displayName ?? "Unknown",
+          senderName: message.senderName ?? "Unknown",
           body: message.body,
           createdAt: message.createdAt,
           replyToMessageId: message.replyToMessageId,
@@ -188,6 +189,7 @@ export const send = mutation({
     const messageId = await ctx.db.insert("messages", {
       conversationId: args.conversationId,
       senderId: currentUser._id,
+      senderName: currentUser.displayName,
       body,
       createdAt,
       replyToMessageId: args.replyToMessageId,

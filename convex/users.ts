@@ -75,7 +75,10 @@ export const searchUsers = query({
       return [];
     }
 
-    const users = await ctx.db.query("users").collect();
+    const users = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalizedSearch))
+      .collect();
 
     return users
       .filter((user) => user.clerkId !== currentClerkId)

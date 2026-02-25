@@ -81,7 +81,9 @@ async function buildConversationSummary(
   const messages = await ctx.db
     .query("messages")
     .withIndex("by_conversation_created_at", (q) =>
-      q.eq("conversationId", conversationId),
+      lastReadAt > 0
+        ? q.eq("conversationId", conversationId).gt("createdAt", lastReadAt)
+        : q.eq("conversationId", conversationId),
     )
     .collect();
 
@@ -298,15 +300,14 @@ export const getConversationOverview = query({
 
     const membership = await ctx.db
       .query("conversationMembers")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", args.conversationId),
+      .withIndex("by_conversation_user", (q) =>
+        q
+          .eq("conversationId", args.conversationId)
+          .eq("userId", currentUser._id),
       )
-      .collect();
+      .unique();
 
-    const isMember = membership.some(
-      (member) => member.userId === currentUser._id,
-    );
-    if (!isMember) {
+    if (!membership) {
       return null;
     }
 

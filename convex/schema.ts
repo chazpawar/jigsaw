@@ -9,7 +9,9 @@ export default defineSchema({
     email: v.optional(v.string()),
     isOnline: v.boolean(),
     lastSeenAt: v.optional(v.number()),
-  }).index("by_clerk_id", ["clerkId"]),
+  })
+    .index("by_clerk_id", ["clerkId"])
+    .index("by_email", ["email"]),
 
   conversations: defineTable({
     type: v.union(v.literal("direct"), v.literal("group")),
@@ -30,7 +32,8 @@ export default defineSchema({
     joinedAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_conversation", ["conversationId"]),
+    .index("by_conversation", ["conversationId"])
+    .index("by_conversation_user", ["conversationId", "userId"]),
 
   conversationReads: defineTable({
     conversationId: v.id("conversations"),
@@ -52,6 +55,7 @@ export default defineSchema({
   messages: defineTable({
     conversationId: v.id("conversations"),
     senderId: v.id("users"),
+    senderName: v.optional(v.string()),
     body: v.string(),
     createdAt: v.number(),
     replyToMessageId: v.optional(v.id("messages")),

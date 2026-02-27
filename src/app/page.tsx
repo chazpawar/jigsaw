@@ -1,6 +1,12 @@
 import { auth } from "@clerk/nextjs/server";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
+
+export const metadata: Metadata = {
+  title: "Jigsaw Chat",
+  description: "Sign in to access the Jigsaw real-time messaging workspace.",
+};
 
 export default async function Home() {
   const { userId } = await auth();

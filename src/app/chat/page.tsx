@@ -1,6 +1,12 @@
 import { auth } from "@clerk/nextjs/server";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/chat/app-shell";
+
+export const metadata: Metadata = {
+  title: "Chat Workspace",
+  description: "Realtime chat workspace for direct and group conversations.",
+};
 
 export default async function ChatPage() {
   const isClerkConfigured =

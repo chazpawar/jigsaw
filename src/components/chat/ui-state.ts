@@ -1,4 +1,5 @@
 import type { Id } from "@convex/_generated/dataModel";
+import type { Dispatch } from "react";
 import type { ForwardPayload, ReplyTarget } from "./model";
 
 export type ChatUiState = {
@@ -52,6 +53,8 @@ type ChatUiAction =
   | { type: "resetConversationUi" }
   | { type: "toggleSelectedMessage"; messageId: Id<"messages"> }
   | { type: "incrementUnseen"; by: number };
+
+export type ChatUiDispatch = Dispatch<ChatUiAction>;
 
 export function chatUiReducer(
   state: ChatUiState,

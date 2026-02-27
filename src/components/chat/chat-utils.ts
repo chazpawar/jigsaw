@@ -1,4 +1,4 @@
-export const ONLINE_WINDOW_MS = 30_000;
+const ONLINE_WINDOW_MS = 30_000;
 export const AUTO_SCROLL_THRESHOLD = 48;
 export const REACTION_SET = ["👍", "❤️", "😂", "😮", "😢"] as const;
 
